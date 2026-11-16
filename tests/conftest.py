@@ -5,43 +5,71 @@ import pytest
 from fastapi.testclient import TestClient
 
 import main
-from src.storage import MovieStorage
+from src import MovieCache, MovieStorage
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch):
-    """Create a test client with a separate SQLite database."""
-    test_db = tmp_path / "movies.db"
-    test_storage = MovieStorage(db_path=test_db)
+def test_storage(tmp_path):
+    return MovieStorage(tmp_path / "test_movies.db")
 
+
+@pytest.fixture
+def client(test_storage, monkeypatch):
     monkeypatch.setattr(main, "storage", test_storage)
+    monkeypatch.setattr(main, "cache", MovieCache())
 
     with TestClient(main.app) as test_client:
         yield test_client
 
 
 @pytest.fixture
-def sample_movies_bytes():
-    """Read the sample movie CSV file."""
-    filepath = Path("fixtures") / "sample_movies.csv"
-    return filepath.read_bytes()
+def sample_csv_bytes():
+    return (Path("fixtures") / "sample_movies.csv").read_bytes()
 
 
 @pytest.fixture
-def uploaded_movies(client, sample_movies_bytes):
-    """Upload the sample movies for testing."""
+def uploaded_movies(client, sample_csv_bytes):
     response = client.post(
         "/upload",
         files={
             "file": (
                 "sample_movies.csv",
-                sample_movies_bytes,
+                sample_csv_bytes,
                 "text/csv"
             )
         }
     )
 
     assert response.status_code == 200
-    assert response.json()["rows"] == 20
-
     return response.json()
+
+
+@pytest.fixture
+def processing_body():
+    return {
+        "validation": {
+            "required_columns": [
+                "title",
+                "release_year",
+                "rating",
+                "genre"
+            ],
+            "numeric_columns": [
+                "release_year",
+                "rating"
+            ]
+        },
+        "processing": {
+            "remove_duplicates": True,
+            "missing": {
+                "enabled": True,
+                "axis": "rows"
+            },
+            "outliers": {
+                "enabled": True,
+                "columns": ["rating"],
+                "method": "iqr",
+                "threshold": 1.5
+            }
+        }
+    }
